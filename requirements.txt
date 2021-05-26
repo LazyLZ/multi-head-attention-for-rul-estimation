@@ -1,0 +1,5 @@
+numpy==1.18.1
+torch==1.7.1+cu110
+pandas==1.0.1
+pytorch_lightning==1.1.4
+scikit_learn==0.24.2
