@@ -6,8 +6,8 @@ from model.utils import ACTIVATION_MAP, RNN_MAP
 class MultiHeadAttentionLSTM(nn.Module):
     def __init__(self, cell, sequence_len, feature_num, hidden_dim,
                  fc_layer_dim, rnn_num_layers, output_dim, fc_activation,
-                 attention_order, feature_head_num=None, fc_dropout=0,
-                 rnn_dropout=0, bidirectional=False, return_attention_weights=False):
+                 attention_order, feature_head_num=None, sequence_head_num=None,
+                 fc_dropout=0, rnn_dropout=0, bidirectional=False, return_attention_weights=False):
         super().__init__()
         assert cell in ['rnn', 'lstm', 'gru']
         assert fc_activation in ['tanh', 'gelu', 'relu']
@@ -29,6 +29,7 @@ class MultiHeadAttentionLSTM(nn.Module):
         self.rnn_dropout = rnn_dropout
 
         self.feature_head_num = feature_head_num
+        self.sequence_head_num = sequence_head_num
 
         self.return_attention_weights = return_attention_weights
 
@@ -44,6 +45,14 @@ class MultiHeadAttentionLSTM(nn.Module):
                     )
                 )
                 self.attention_order.append('feature')
+            if attn_type == 'sequence' and self.sequence_head_num > 0:
+                self.attention_layers.append(
+                    nn.MultiheadAttention(
+                        embed_dim=self.feature_num,
+                        num_heads=self.sequence_head_num
+                    )
+                )
+                self.attention_order.append('sequence')
 
         self.rnn = RNN_MAP[self.cell](
             input_size=self.feature_num,
@@ -63,28 +72,40 @@ class MultiHeadAttentionLSTM(nn.Module):
             nn.Linear(self.fc_layer_dim, output_dim),
         )
 
+        # nn.init.kaiming_normal_(self.linear[0].weight, mode='fan_in')
+        # nn.init.kaiming_normal_(self.linear[3].weight, mode='fan_in')
         if self.cell == 'lstm':
+            # hidden_size = self.rnn_hidden_size
             nn.init.orthogonal_(self.rnn.weight_ih_l0)
             nn.init.orthogonal_(self.rnn.weight_hh_l0)
+            # nn.init.zeros_(self.rnn.bias_ih_l0)
+            # nn.init.ones_(self.rnn.bias_ih_l0[hidden_size:hidden_size * 2])
 
     def forward(self, x):
+        # print(x.shape)
         # Attention
         feature_weights = None
+        sequence_weights = None
         for i, module in enumerate(self.attention_layers):
             attn_type = self.attention_order[i]
             if attn_type == 'feature':
                 a_in = x.permute(2, 0, 1)
                 x, feature_weights = module(a_in, a_in, a_in)
                 x = x.permute(1, 2, 0)
+            if attn_type == 'sequence':
+                a_in = x.permute(1, 0, 2)
+                x, sequence_weights = module(a_in, a_in, a_in)
+                x = x.permute(1, 0, 2)
 
-        # RNN/LSTM/GRU
+        # LSTM/GRU
         x, _ = self.rnn(x)
 
         # Raw
         x = x.contiguous()
         x = x[:, -1, :]
         x = self.linear(x)
+
         if self.return_attention_weights:
-            return x, feature_weights
+            return x, feature_weights, sequence_weights
         else:
             return x

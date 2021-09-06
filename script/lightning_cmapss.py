@@ -9,11 +9,10 @@ from utils.metrics import score
 
 
 class Module(pl.LightningModule):
-    def __init__(self, lr, save_weights, **kwargs):
+    def __init__(self, lr, **kwargs):
         super(Module, self).__init__()
         self.net = MultiHeadAttentionLSTM(**kwargs)
         self.lr = lr
-        self.save_weights = save_weights
         # print(self.net)
         # print('lr', self.lr)
 
@@ -24,43 +23,25 @@ class Module(pl.LightningModule):
         x, y, _ = batch
         # print('x', x)
         # print('y', y)
-        x, _ = self.net(x)
+        x = self.net(x)
         loss = F.mse_loss(x, y)
         self.log('train_rmse', torch.sqrt(loss), prog_bar=True)
         return loss
 
     def validation_step(self, batch, batch_idx):
         x, y, _ = batch
-        x, _ = self.net(x)
+        x = self.net(x)
         loss = F.mse_loss(x, y, reduction='sum')
         return torch.tensor([loss.item(), len(y)])
 
     def test_step(self, batch, batch_idx, reduction='sum'):
         x, y, id = batch
-        x, feature_weight = self.net(x)
-        if feature_weight is not None:
-            return torch.cat([id, x, y, feature_weight.view(feature_weight.size(0), -1)], dim=1)
-        else:
-            return torch.cat([id, x, y], dim=1)
+        x = self.net(x)
+        return torch.cat([id, x, y], dim=1)
 
     def test_epoch_end(self, step_outputs):
         t = torch.cat(step_outputs, dim=0)
         t = t.cpu()
-        if self.save_weights and t.shape[1] > 3:
-            f_attn_ij = []
-            feature_num = self.net.feature_num
-            for i in range(feature_num):
-                for j in range(feature_num):
-                    f_attn_ij.append('%d_%d' % (i, j))
-            data = t[:, : 3 + len(f_attn_ij)]
-            df = pd.DataFrame(data.numpy(), columns=['id', 'output', 'label'] + f_attn_ij)
-            print()
-            print(df)
-            df.to_csv('test_result_with_feature_attention_weight.csv', index=False)
-
-        if self.save_weights and t.shape[1] <= 3:
-            print('\n[SaveAttentionWeights] Attention is not used')
-        # print('test size', t.shape[0])
         rmse = torch.sqrt(mean_squared_error(t[:, 1], t[:, 2]))
         s = score(t[:, 1], t[:, 2])
         self.log('test_rmse', rmse)
@@ -119,8 +100,7 @@ if __name__ == '__main__':
         'attention_order': args.attention_order or [],
         'bidirectional': args.bidirectional,
         'feature_head_num': args.feature_head_num,
-        'fc_dropout': args.fc_dropout,
-        'return_attention_weights': True
+        'fc_dropout': args.fc_dropout
     }
     train_loader, test_loader, valid_loader = CMAPSSDataset.get_data_loaders(
         dataset_root=args.dataset_root,
@@ -139,7 +119,6 @@ if __name__ == '__main__':
 
     model = Module(
         lr=args.lr,
-        save_weights=args.save_attention_weights,
         **model_kwargs
     )
     early_stop_callback = pl.callbacks.early_stopping.EarlyStopping(
