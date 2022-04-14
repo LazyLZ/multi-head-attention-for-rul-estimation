@@ -1,7 +1,6 @@
 .DS_Store
 checkpoints
 
-
 # local env files
 .env.local
 .env.*.local
